@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Multiplayer Ping Pong - PeerJS</title>
+<style>
+  body { background:#111; color:white; font-family:Arial; text-align:center; }
+  #gameCanvas { background:#000; border:3px solid white; margin-top:20px; }
+  button { padding:10px 20px; margin:10px; font-size:16px; }
+</style>
+</head>
+<body>
+
+<h1>Multiplayer Ping Pong (PeerJS)</h1>
+
+<button id="hostBtn">Host Game</button>
+<button id="joinBtn">Join Game</button>
+<p id="info"></p>
+
+<canvas id="gameCanvas" width="700" height="400"></canvas>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+let peer, conn;
+let isHost = false;
+let connected = false;
+
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+// GAME STATE
+let paddleLeft = 150;
+let paddleRight = 150;
+let ball = { x:350, y:200, vx:4, vy:3 };
+
+const PADDLE_H = 80;
+const PADDLE_W = 10;
+
+// INPUT
+let keys = {};
+document.addEventListener("keydown", e => keys[e.key] = true);
+document.addEventListener("keyup", e => keys[e.key] = false);
+
+// HOST GAME
+document.getElementById("hostBtn").onclick = () => {
+  peer = new Peer();
+  isHost = true;
+
+  peer.on("open", id => {
+    document.getElementById("info").innerText = "Room Code: " + id;
+  });
+
+  peer.on("connection", c => {
+    conn = c;
+    connected = true;
+    document.getElementById("info").innerText = "Player connected!";
+    conn.on("data", handleData);
+  });
+};
+
+// JOIN GAME
+document.getElementById("joinBtn").onclick = () => {
+  const room = prompt("Enter room code:");
+  peer = new Peer();
+
+  peer.on("open", () => {
+    conn = peer.connect(room);
+    conn.on("open", () => {
+      connected = true;
+      document.getElementById("info").innerText = "Connected to host!";
+    });
+    conn.on("data", handleData);
+  });
+};
+
+// RECEIVE DATA
+function handleData(data) {
+  if (data.type === "STATE") {
+    paddleLeft = data.paddleLeft;
+    paddleRight = data.paddleRight;
+    ball = data.ball;
+  }
+}
+
+// SEND DATA
+function sendState() {
+  if (conn && conn.open) {
+    conn.send({
+      type: "STATE",
+      paddleLeft,
+      paddleRight,
+      ball
+    });
+  }
+}
+
+// GAME LOOP
+function update() {
+  if (!connected) return;
+
+  // PLAYER CONTROLS
+  if (isHost) {
+    if (keys["w"]) paddleLeft -= 5;
+    if (keys["s"]) paddleLeft += 5;
+  } else {
+    if (keys["ArrowUp"]) paddleRight -= 5;
+    if (keys["ArrowDown"]) paddleRight += 5;
+  }
+
+  // LIMIT PADDLES
+  paddleLeft = Math.max(0, Math.min(canvas.height - PADDLE_H, paddleLeft));
+  paddleRight = Math.max(0, Math.min(canvas.height - PADDLE_H, paddleRight));
+
+  // HOST MOVES BALL
+  if (isHost) {
+    ball.x += ball.vx;
+    ball.y += ball.vy;
+
+    // WALL BOUNCE
+    if (ball.y < 0 || ball.y > canvas.height) ball.vy *= -1;
+
+    // LEFT PADDLE COLLISION
+    if (ball.x < 20 &&
+        ball.y > paddleLeft &&
+        ball.y < paddleLeft + PADDLE_H) {
+      ball.vx *= -1;
+    }
+
+    // RIGHT PADDLE COLLISION
+    if (ball.x > canvas.width - 20 &&
+        ball.y > paddleRight &&
+        ball.y < paddleRight + PADDLE_H) {
+      ball.vx *= -1;
+    }
+
+    // RESET IF SCORE
+    if (ball.x < 0 || ball.x > canvas.width) {
+      ball = { x:350, y:200, vx:4, vy:3 };
+    }
+
+    sendState();
+  }
+}
+
+function draw() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // PADDLES
+  ctx.fillStyle = "white";
+  ctx.fillRect(10, paddleLeft, PADDLE_W, PADDLE_H);
+  ctx.fillRect(canvas.width - 20, paddleRight, PADDLE_W, PADDLE_H);
+
+  // BALL
+  ctx.beginPath();
+  ctx.arc(ball.x, ball.y, 8, 0, Math.PI*2);
+  ctx.fill();
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+
+</body>
+</html>
