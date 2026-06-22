@@ -61,6 +61,7 @@
     let conn = null;
     let isHost = false;
     let connected = false;
+    let gameRunning = false;
 
     function setStatus(msg) {
       console.log('[STATUS]', msg);
@@ -69,16 +70,14 @@
 
     function initPeer() {
       if (peer) return;
-      peer = new Peer(); // random ID using PeerServer Cloud
+      peer = new Peer();
       peer.on('open', id => {
         myIdEl.textContent = id;
         setStatus('Peer ready. Your ID: ' + id);
       });
 
-      // Incoming connection (this side becomes host if we accept first)
       peer.on('connection', c => {
         if (conn) {
-          // Only allow one connection; close extra
           c.close();
           return;
         }
@@ -96,8 +95,8 @@
 
     createHostBtn.addEventListener('click', () => {
       initPeer();
-      isHost = true; // will actually host once someone connects
-      setStatus('Host mode: waiting for client to connect…');
+      isHost = true;
+      setStatus('Host mode: waiting for client…');
     });
 
     connectBtn.addEventListener('click', () => {
@@ -118,20 +117,27 @@
 
       conn.on('open', () => {
         connected = true;
+
+        if (isHost) {
+          gameRunning = true; // auto-start
+        }
+
         setStatus(isHost ? 'Client connected. You are HOST.' : 'Connected to host. You are CLIENT.');
       });
 
       conn.on('data', data => {
-        // Data is either game state (from host) or paddle position (from client)
         if (isHost) {
-          // Host receives client paddle position
           if (data && typeof data.clientPaddleY === 'number') {
             clientPaddle.y = data.clientPaddleY;
           }
         } else {
-          // Client receives full game state
-          if (data && data.type === 'state') {
+          if (data.type === 'state') {
             applyGameState(data);
+          }
+          if (data.type === 'gameOver') {
+            gameRunning = false;
+            const msg = data.winner === 'host' ? 'Host wins!' : 'You win!';
+            setStatus(msg);
           }
         }
       });
@@ -172,24 +178,10 @@
     let hostScore = 0;
     let clientScore = 0;
 
-    const keys = {
-      ArrowUp: false,
-      ArrowDown: false,
-      w: false,
-      s: false
-    };
+    const keys = { ArrowUp: false, ArrowDown: false, w: false, s: false };
 
-    window.addEventListener('keydown', e => {
-      if (e.key in keys) {
-        keys[e.key] = true;
-      }
-    });
-
-    window.addEventListener('keyup', e => {
-      if (e.key in keys) {
-        keys[e.key] = false;
-      }
-    });
+    window.addEventListener('keydown', e => { if (e.key in keys) keys[e.key] = true; });
+    window.addEventListener('keyup', e => { if (e.key in keys) keys[e.key] = false; });
 
     function resetBall(direction = 1) {
       ball.x = W / 2;
@@ -198,58 +190,58 @@
       ball.vy = (Math.random() * 4 - 2) || 2;
     }
 
+    function checkWin() {
+      if (hostScore >= 5 || clientScore >= 5) {
+        gameRunning = false;
+
+        const winner = hostScore >= 5 ? 'host' : 'client';
+
+        if (connected && conn && conn.open) {
+          conn.send({ type: 'gameOver', winner });
+        }
+
+        setStatus(winner === 'host' ? 'You win!' : 'Client wins!');
+      }
+    }
+
     function updateHost(dt) {
-      // Host controls left paddle with W/S or Up/Down
-      if (keys.w || keys.ArrowUp) {
-        hostPaddle.y -= paddleSpeed;
-      }
-      if (keys.s || keys.ArrowDown) {
-        hostPaddle.y += paddleSpeed;
-      }
+      if (!gameRunning) return;
+
+      if (keys.w || keys.ArrowUp) hostPaddle.y -= paddleSpeed;
+      if (keys.s || keys.ArrowDown) hostPaddle.y += paddleSpeed;
       hostPaddle.y = Math.max(0, Math.min(H - paddleHeight, hostPaddle.y));
 
-      // Ball physics
       ball.x += ball.vx;
       ball.y += ball.vy;
 
-      // Top/bottom bounce
-      if (ball.y <= 0 || ball.y + ballSize >= H) {
-        ball.vy *= -1;
-      }
+      if (ball.y <= 0 || ball.y + ballSize >= H) ball.vy *= -1;
 
-      // Paddle collisions
-      // Host paddle
       if (
         ball.x <= hostPaddle.x + paddleWidth &&
         ball.x >= hostPaddle.x &&
         ball.y + ballSize >= hostPaddle.y &&
         ball.y <= hostPaddle.y + paddleHeight
-      ) {
-        ball.vx = Math.abs(ball.vx);
-      }
+      ) ball.vx = Math.abs(ball.vx);
 
-      // Client paddle
       if (
         ball.x + ballSize >= clientPaddle.x &&
         ball.x + ballSize <= clientPaddle.x + paddleWidth &&
         ball.y + ballSize >= clientPaddle.y &&
         ball.y <= clientPaddle.y + paddleHeight
-      ) {
-        ball.vx = -Math.abs(ball.vx);
-      }
+      ) ball.vx = -Math.abs(ball.vx);
 
-      // Scoring
       if (ball.x < 0) {
         clientScore++;
+        checkWin();
         resetBall(1);
       } else if (ball.x > W) {
         hostScore++;
+        checkWin();
         resetBall(-1);
       }
 
-      // Send state to client
       if (connected && conn && conn.open) {
-        const state = {
+        conn.send({
           type: 'state',
           hostPaddleY: hostPaddle.y,
           clientPaddleY: clientPaddle.y,
@@ -257,8 +249,7 @@
           ballY: ball.y,
           hostScore,
           clientScore
-        };
-        conn.send(state);
+        });
       }
     }
 
@@ -272,16 +263,12 @@
     }
 
     function updateClient(dt) {
-      // Client controls right paddle with Up/Down or W/S
-      if (keys.w || keys.ArrowUp) {
-        clientPaddle.y -= paddleSpeed;
-      }
-      if (keys.s || keys.ArrowDown) {
-        clientPaddle.y += paddleSpeed;
-      }
+      if (!gameRunning) return;
+
+      if (keys.w || keys.ArrowUp) clientPaddle.y -= paddleSpeed;
+      if (keys.s || keys.ArrowDown) clientPaddle.y += paddleSpeed;
       clientPaddle.y = Math.max(0, Math.min(H - paddleHeight, clientPaddle.y));
 
-      // Send paddle position to host
       if (connected && conn && conn.open) {
         conn.send({ clientPaddleY: clientPaddle.y });
       }
@@ -290,7 +277,6 @@
     function draw() {
       ctx.clearRect(0, 0, W, H);
 
-      // Middle line
       ctx.strokeStyle = '#444';
       ctx.setLineDash([5, 5]);
       ctx.beginPath();
@@ -299,21 +285,17 @@
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Paddles
       ctx.fillStyle = '#fff';
       ctx.fillRect(hostPaddle.x, hostPaddle.y, paddleWidth, paddleHeight);
       ctx.fillRect(clientPaddle.x, clientPaddle.y, paddleWidth, paddleHeight);
 
-      // Ball
       ctx.fillRect(ball.x, ball.y, ballSize, ballSize);
 
-      // Scores
       ctx.font = '20px monospace';
       ctx.textAlign = 'center';
       ctx.fillText(hostScore, W / 4, 30);
       ctx.fillText(clientScore, (3 * W) / 4, 30);
 
-      // Connection role
       ctx.font = '14px monospace';
       ctx.textAlign = 'left';
       ctx.fillText(isHost ? 'ROLE: HOST' : 'ROLE: CLIENT', 10, H - 10);
@@ -321,13 +303,12 @@
 
     let lastTime = performance.now();
     function loop(now) {
-      const dt = (now - lastTime) / 16.67; // ~60fps normalized
+      const dt = (now - lastTime) / 16.67;
       lastTime = now;
 
-      if (isHost) {
-        updateHost(dt);
-      } else {
-        updateClient(dt);
+      if (gameRunning) {
+        if (isHost) updateHost(dt);
+        else updateClient(dt);
       }
 
       draw();
@@ -338,3 +319,4 @@
   </script>
 </body>
 </html>
+
