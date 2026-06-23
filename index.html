@@ -118,6 +118,9 @@
         if (isHost) {
           gameRunning = true;
           conn.send({ type: "startGame" });
+        } else {
+          // 🔥 FIX: CLIENT MUST START GAME LOOP TOO
+          gameRunning = true;
         }
 
         setStatus(isHost ? 'Client connected. You are HOST.' : 'Connected to host. You are CLIENT.');
