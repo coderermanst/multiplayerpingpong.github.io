@@ -47,10 +47,8 @@
 
   <canvas id="game" width="640" height="360"></canvas>
 
-  <!-- PeerJS CDN -->
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <script>
-    // --- PeerJS setup ---
     const statusEl = document.getElementById('status');
     const myIdEl = document.getElementById('myId');
     const remoteIdInput = document.getElementById('remoteId');
@@ -64,13 +62,13 @@
     let gameRunning = false;
 
     function setStatus(msg) {
-      console.log('[STATUS]', msg);
       statusEl.textContent = msg;
     }
 
     function initPeer() {
       if (peer) return;
       peer = new Peer();
+
       peer.on('open', id => {
         myIdEl.textContent = id;
         setStatus('Peer ready. Your ID: ' + id);
@@ -88,7 +86,6 @@
       });
 
       peer.on('error', err => {
-        console.error(err);
         setStatus('Peer error: ' + err.type);
       });
     }
@@ -119,25 +116,28 @@
         connected = true;
 
         if (isHost) {
-          gameRunning = true; // auto-start
+          gameRunning = true;
+          conn.send({ type: "startGame" });
         }
 
         setStatus(isHost ? 'Client connected. You are HOST.' : 'Connected to host. You are CLIENT.');
       });
 
       conn.on('data', data => {
+        if (!isHost && data.type === "startGame") {
+          gameRunning = true;
+          setStatus("Game started!");
+        }
+
         if (isHost) {
-          if (data && typeof data.clientPaddleY === 'number') {
+          if (typeof data.clientPaddleY === 'number') {
             clientPaddle.y = data.clientPaddleY;
           }
         } else {
-          if (data.type === 'state') {
-            applyGameState(data);
-          }
+          if (data.type === 'state') applyGameState(data);
           if (data.type === 'gameOver') {
             gameRunning = false;
-            const msg = data.winner === 'host' ? 'Host wins!' : 'You win!';
-            setStatus(msg);
+            setStatus(data.winner === 'host' ? 'Host wins!' : 'You win!');
           }
         }
       });
@@ -148,12 +148,10 @@
       });
 
       conn.on('error', err => {
-        console.error(err);
         setStatus('Connection error: ' + err.type);
       });
     }
 
-    // --- Game setup ---
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
 
@@ -168,12 +166,7 @@
     const hostPaddle = { x: 20, y: H / 2 - paddleHeight / 2 };
     const clientPaddle = { x: W - 20 - paddleWidth, y: H / 2 - paddleHeight / 2 };
 
-    const ball = {
-      x: W / 2,
-      y: H / 2,
-      vx: 4,
-      vy: 3
-    };
+    const ball = { x: W / 2, y: H / 2, vx: 4, vy: 3 };
 
     let hostScore = 0;
     let clientScore = 0;
@@ -193,18 +186,15 @@
     function checkWin() {
       if (hostScore >= 5 || clientScore >= 5) {
         gameRunning = false;
-
         const winner = hostScore >= 5 ? 'host' : 'client';
-
         if (connected && conn && conn.open) {
           conn.send({ type: 'gameOver', winner });
         }
-
         setStatus(winner === 'host' ? 'You win!' : 'Client wins!');
       }
     }
 
-    function updateHost(dt) {
+    function updateHost() {
       if (!gameRunning) return;
 
       if (keys.w || keys.ArrowUp) hostPaddle.y -= paddleSpeed;
@@ -262,7 +252,7 @@
       clientScore = state.clientScore;
     }
 
-    function updateClient(dt) {
+    function updateClient() {
       if (!gameRunning) return;
 
       if (keys.w || keys.ArrowUp) clientPaddle.y -= paddleSpeed;
@@ -301,16 +291,11 @@
       ctx.fillText(isHost ? 'ROLE: HOST' : 'ROLE: CLIENT', 10, H - 10);
     }
 
-    let lastTime = performance.now();
-    function loop(now) {
-      const dt = (now - lastTime) / 16.67;
-      lastTime = now;
-
+    function loop() {
       if (gameRunning) {
-        if (isHost) updateHost(dt);
-        else updateClient(dt);
+        if (isHost) updateHost();
+        else updateClient();
       }
-
       draw();
       requestAnimationFrame(loop);
     }
